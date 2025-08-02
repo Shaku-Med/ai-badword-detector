@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+requests
+transformers
+torch
+numpy
+scikit-learn
+nltk
+textblob 
