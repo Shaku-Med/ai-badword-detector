@@ -7,6 +7,7 @@ import nltk
 from textblob import TextBlob
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import gc
 
 try:
     from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
@@ -153,33 +154,47 @@ class AIDetector:
             r"\b(you\s+piece\s*of\s*filth\b)"
         ]
         
-        self.initialize_ai_models()
-        
-    def initialize_ai_models(self):
+        self.toxicity_classifier = None
+        self.sentiment_classifier = None
         self.sentiment_analyzer = TextBlob
-        self.vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+        self.vectorizer = None
+        self._toxic_vectors = None
+        self._models_loaded = False
         
-        if TRANSFORMERS_AVAILABLE:
-            try:
+    def _load_ai_models(self):
+        if self._models_loaded:
+            return
+            
+        try:
+            if TRANSFORMERS_AVAILABLE:
+                print("Loading AI models...")
                 self.toxicity_classifier = pipeline(
                     "text-classification",
                     model="unitary/toxic-bert",
-                    return_all_scores=True
+                    return_all_scores=True,
+                    device=-1
                 )
                 self.sentiment_classifier = pipeline(
                     "sentiment-analysis",
-                    model="cardiffnlp/twitter-roberta-base-sentiment-latest"
+                    model="cardiffnlp/twitter-roberta-base-sentiment-latest",
+                    device=-1
                 )
                 print("AI models loaded successfully!")
-            except Exception as e:
-                print(f"Error loading transformers: {e}")
-                self.toxicity_classifier = None
-                self.sentiment_classifier = None
-        else:
+            else:
+                print("Transformers not available, using fallback methods")
+            
+            self.vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+            self._models_loaded = True
+            
+        except Exception as e:
+            print(f"Error loading AI models: {e}")
             self.toxicity_classifier = None
             self.sentiment_classifier = None
 
     def analyze_sentence(self, text: str) -> Dict[str, Any]:
+        if not self._models_loaded:
+            self._load_ai_models()
+            
         text_lower = text.lower().strip()
         text_normalized = self._normalize_text(text_lower)
         
@@ -234,6 +249,8 @@ class AIDetector:
         final_score = (toxicity_score + context_score + sentiment_score + ai_toxicity_score + semantic_similarity_score + bypass_score) / 6.0
         final_score = min(1.0, final_score)
         
+        gc.collect()
+        
         return {
             "toxicity_score": float(round(toxicity_score, 3)),
             "context_score": float(round(context_score, 3)),
@@ -269,7 +286,7 @@ class AIDetector:
     
     def _analyze_semantic_similarity(self, text: str) -> float:
         try:
-            if not hasattr(self, '_toxic_vectors'):
+            if self._toxic_vectors is None:
                 self._toxic_vectors = self.vectorizer.fit_transform(self.toxic_phrases)
             
             text_vector = self.vectorizer.transform([text])
